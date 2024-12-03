@@ -27,12 +27,16 @@ pygame.display.set_caption("Jigsaw Puzzle")
 # Clock for FPS
 clock = pygame.time.Clock()
 
-# Variables for puzzle settings
-ROWS, COLS = 3, 3  # Default grid size
+ROWS = 3
+COLS = 3
+
+# Variables for puzzle settings  # Default grid size
 BORDER_PADDING = 50
 dragging = None  # Track which piece is being dragged
 locked_pieces = set()  # Set of locked pieces
-piece_positions = []
+piece_positions = []  # Positions of the pieces
+pieces = []  # Puzzle pieces
+grid = []  # Grid for snapping
 
 # Load image
 original_image = pygame.image.load(IMAGE_PATH)
@@ -48,6 +52,29 @@ manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
 green_border_rect = pygame.Rect(
     (BORDER_PADDING, BORDER_PADDING, image_width, image_height)
 )
+
+# Dropdown menu initialization (above functions)
+dropdown_menu = pygame_gui.elements.UIDropDownMenu(
+    options_list=["3x3", "4x4", "5x5"],
+    starting_option="3x3",  # Default is 3x3
+    relative_rect=pygame.Rect((250, 150), (300, 50)),
+    manager=manager,
+)
+# Update grid size based on dropdown selection
+def update_grid_size(selected_option):
+    global ROWS
+    global COLS
+    if selected_option == ('3x3', '3x3'):
+        ROWS = 3
+        COLS = 3
+    if selected_option == ('4x4', '4x4'):
+        ROWS = 4
+        COLS = 4
+    elif selected_option == ('5x5', '5x5'):
+        ROWS = 5
+        COLS = 5
+    
+    generate_pieces()
 
 # Split image into pieces
 def split_image(image, rows, cols):
@@ -67,18 +94,20 @@ def split_image(image, rows, cols):
 # Generate puzzle pieces and their random positions
 def generate_pieces():
     global pieces, piece_positions, locked_pieces, grid
+    piece_width = image_width // COLS
+    piece_height = image_height // ROWS
     pieces = split_image(original_image, ROWS, COLS)
     piece_positions = []
     for _ in pieces:
-        rand_x = random.randint(0, WINDOW_WIDTH - image_width // COLS)
-        rand_y = random.randint(0, WINDOW_HEIGHT - image_height // ROWS)
+        rand_x = random.randint(0, WINDOW_WIDTH - piece_width)
+        rand_y = random.randint(0, WINDOW_HEIGHT - piece_height)
         while green_border_rect.collidepoint(rand_x, rand_y):
-            rand_x = random.randint(0, WINDOW_WIDTH - image_width // COLS)
-            rand_y = random.randint(0, WINDOW_HEIGHT - image_height // ROWS)
+            rand_x = random.randint(0, WINDOW_WIDTH - piece_width)
+            rand_y = random.randint(0, WINDOW_HEIGHT - piece_height)
         piece_positions.append([rand_x, rand_y])
     
     grid = [
-        (BORDER_PADDING + col * (image_width // COLS), BORDER_PADDING + row * (image_height // ROWS))
+        (BORDER_PADDING + col * piece_width, BORDER_PADDING + row * piece_height)
         for row in range(ROWS)
         for col in range(COLS)
     ]
@@ -87,17 +116,10 @@ def generate_pieces():
 # Set the game state
 in_game = False
 
-# Create UI elements
+# Create other UI elements
 title_label = pygame_gui.elements.UILabel(
     relative_rect=pygame.Rect((250, 50), (300, 50)),
     text="Jigsaw Puzzle",
-    manager=manager,
-)
-
-dropdown_menu = pygame_gui.elements.UIDropDownMenu(
-    options_list=["3x3", "4x4", "5x5"],
-    starting_option="3x3",  # Default is 3x3
-    relative_rect=pygame.Rect((250, 150), (300, 50)),
     manager=manager,
 )
 
@@ -119,11 +141,13 @@ while running:
         if in_game:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_x, mouse_y = event.pos
-                for i in range(len(piece_positions)):
+                for i in range(len(piece_positions) -1, -1, -1): #iterate backwards
                     if i in locked_pieces:
                         continue
                     x, y = piece_positions[i]
-                    if x <= mouse_x <= x + (image_width // COLS) and y <= mouse_y <= y + (image_height // ROWS):
+                    piece_width = image_width // COLS
+                    piece_height = image_height // ROWS
+                    if x <= mouse_x <= x + piece_width and y <= mouse_y <= y + piece_height:
                         dragging = i
                         break
 
@@ -138,24 +162,20 @@ while running:
 
             elif event.type == pygame.MOUSEMOTION and dragging is not None:
                 mouse_x, mouse_y = event.pos
-                piece_positions[dragging] = [mouse_x - (image_width // COLS) // 2, mouse_y - (image_height // ROWS) // 2]
+                piece_width = image_width // COLS
+                piece_height = image_height // ROWS
+                piece_positions[dragging] = [mouse_x - piece_width // 2, mouse_y - piece_height // 2]
 
         manager.process_events(event)
 
         if event.type == pygame.USEREVENT:
+            if event.user_type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
+                if event.ui_element == dropdown_menu:
+                    update_grid_size(dropdown_menu.selected_option)
+
             if event.user_type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == start_button:
-                    # Set grid size based on dropdown menu selection
-                    grid_size = dropdown_menu.selected_option
-                    if grid_size == "3x3":
-                        ROWS, COLS = 3, 3
-                    elif grid_size == "4x4":
-                        ROWS, COLS = 4, 4
-                    elif grid_size == "5x5":
-                        ROWS, COLS = 5, 5
-
-                    # Generate puzzle and switch to game state
-                    generate_pieces()
+                    update_grid_size(dropdown_menu.selected_option)
                     in_game = True
 
                     # Remove UI elements from the screen
