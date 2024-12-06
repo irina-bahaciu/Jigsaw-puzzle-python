@@ -358,7 +358,10 @@ while running:
                         print("Progress saved!")
 
                     if event.ui_element == reset_button:
-                        generate_pieces()
+                        using_saved_data = False  # Starting a new game, use random positions\
+                        piece_positions = []  # Reset piece positions
+                        locked_pieces = set()  # Reset locked pieces
+                        generate_pieces()  # Generate a new set of pieces
                         print("Puzzle reset!")
 
                     if event.ui_element == back_button:
