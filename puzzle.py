@@ -14,6 +14,7 @@ FPS = 60
 
 # Paths
 IMAGE_PATH = "pic.jpg"
+SAVE_PATH = "puzzle_save.txt"  # Save file for puzzle progress
 if not os.path.exists(IMAGE_PATH):
     raise FileNotFoundError(f"Image file not found at {IMAGE_PATH}")
 
@@ -49,8 +50,8 @@ WINDOW_HEIGHT = max(WINDOW_HEIGHT, image_height + BORDER_PADDING * 2)
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
 manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
 
-# Green border rectangle
-green_border_rect = pygame.Rect(
+# Border rectangle
+border_rect = pygame.Rect(
     (BORDER_PADDING, BORDER_PADDING, image_width, image_height)
 )
 
@@ -104,7 +105,7 @@ def generate_pieces():
     for _ in pieces:
         rand_x = random.randint(0, WINDOW_WIDTH - piece_width)
         rand_y = random.randint(0, WINDOW_HEIGHT - piece_height)
-        while green_border_rect.collidepoint(rand_x, rand_y):
+        while border_rect.collidepoint(rand_x, rand_y):
             rand_x = random.randint(0, WINDOW_WIDTH - piece_width)
             rand_y = random.randint(0, WINDOW_HEIGHT - piece_height)
         piece_positions.append([rand_x, rand_y])
@@ -206,12 +207,17 @@ while running:
 
         if event.type == pygame.USEREVENT:
             if event.user_type == pygame_gui.UI_BUTTON_PRESSED:
+
+                if event.ui_element == exit_button:
+                    pygame.quit()
+                    exit()
+
                 if event.ui_element == start_button:
                     # Fullscreen mode
                     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
                     WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
                     manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
-                    green_border_rect = pygame.Rect(
+                    border_rect = pygame.Rect(
                         (BORDER_PADDING, BORDER_PADDING, image_width, image_height)
                     )
                     update_grid_size(dropdown_menu.selected_option)
@@ -278,7 +284,7 @@ while running:
     screen.fill(BG_COLOR)
 
     if in_game:
-        pygame.draw.rect(screen, GREEN_BORDER_COLOR, green_border_rect, 2)
+        pygame.draw.rect(screen, GREEN_BORDER_COLOR, border_rect, 2)
         piece_width = image_width // COLS
         piece_height = image_height // ROWS
         for i, (piece, (x, y)) in enumerate(zip(pieces, piece_positions)):
