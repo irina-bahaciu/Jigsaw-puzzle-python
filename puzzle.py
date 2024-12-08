@@ -3,6 +3,8 @@ import pygame_gui
 import pickle
 import os
 import random
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
 
 # Initialize Pygame and pygame_gui
 pygame.init()
@@ -10,14 +12,11 @@ pygame.init()
 # Constants
 WINDOW_WIDTH, WINDOW_HEIGHT = 800, 600
 BG_COLOR = (39, 64, 1)
-GREEN_BORDER_COLOR = (242, 159, 5)
+BORDER_COLOR = (242, 159, 5)
 FPS = 60
 
 # Paths
-IMAGE_PATH = "pic.jpg"
 SAVE_PATH = "puzzle_save.txt"  # Save file for puzzle progress
-if not os.path.exists(IMAGE_PATH):
-    raise FileNotFoundError(f"Image file not found at {IMAGE_PATH}")
 
 # Initialize pygame_gui Manager
 manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -41,6 +40,15 @@ piece_positions = []  # Positions of the pieces
 pieces = []  # Puzzle pieces
 grid = []  # Grid for snapping
 
+
+def choose_image():
+    Tk().withdraw()  # Hide the root window
+    file_path = askopenfilename(
+        filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif")],
+        title="Select an image for the puzzle"
+    )
+    return file_path
+
 # Function to scale image to fit within the window
 def scale_image_to_fit(image, max_width, max_height):
     image_width, image_height = image.get_size()
@@ -61,25 +69,6 @@ def scale_image_to_fit(image, max_width, max_height):
     
     return scaled_image
 
-# Load and scale the image to fit the window size
-original_image = pygame.image.load(IMAGE_PATH)
-scaled_image = scale_image_to_fit(original_image, WINDOW_WIDTH - 2 * BORDER_PADDING, WINDOW_HEIGHT - 2 * BORDER_PADDING)
-
-# Update the image size after scaling
-scaled_image_width, scaled_image_height = scaled_image.get_size()
-
-# Ensure the window size is large enough for the scaled image
-WINDOW_WIDTH = max(WINDOW_WIDTH, scaled_image_width + BORDER_PADDING * 2)
-WINDOW_HEIGHT = max(WINDOW_HEIGHT, scaled_image_height + BORDER_PADDING * 2)
-
-# Update the screen and manager based on the new window size
-screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
-manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
-
-# Border rectangle
-border_rect = pygame.Rect(
-    (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
-)
 
 # Dropdown menu for grid selection
 dropdown_menu = pygame_gui.elements.UIDropDownMenu(
@@ -132,7 +121,7 @@ def generate_pieces():
     # Use saved positions if using_saved_data is True
     if using_saved_data:
         # Do nothing, just keep the loaded positions
-        print("Using saved positions for pieces:", piece_positions)
+        print("Using saved positions for pieces.")
     else:
         # Generate random positions if not loading saved data
         piece_positions = []
@@ -160,11 +149,13 @@ def save_progress():
             "locked_pieces": list(locked_pieces),
             "rows": ROWS,
             "cols": COLS,
+            "image_path": IMAGE_PATH, 
+            "scaled_image_width": scaled_image_width,
+            "scaled_image_height": scaled_image_height,
         }
         with open("saved_progress.pkl", "wb") as save_file:
             pickle.dump(save_data, save_file)
         print("Progress saved!")
-        print("Saved data:", save_data)  # Debug: Check the saved data
     except Exception as e:
         print(f"Error saving progress: {e}")
 
@@ -172,18 +163,41 @@ def save_progress():
 # Load puzzle progress
 def load_progress():
     global piece_positions, locked_pieces, ROWS, COLS, using_saved_data
+    global scaled_image, scaled_image_width, scaled_image_height, border_rect, IMAGE_PATH
     try:
         with open("saved_progress.pkl", "rb") as save_file:
             save_data = pickle.load(save_file)
+
+        # Reload the image from the saved path
+        saved_image_path = save_data.get("image_path")
+        if not saved_image_path or not os.path.exists(saved_image_path):
+            raise FileNotFoundError(f"Saved image file not found at {saved_image_path}")
+        
+        IMAGE_PATH = saved_image_path  # Update IMAGE_PATH
+        original_image = pygame.image.load(IMAGE_PATH)
+
+        # Use saved dimensions for scaling
+        scaled_image_width = save_data["scaled_image_width"]
+        scaled_image_height = save_data["scaled_image_height"]
+        scaled_image = pygame.transform.smoothscale(
+           original_image, (scaled_image_width, scaled_image_height)
+        )
+        
+        # Update border
+        border_rect = pygame.Rect(
+            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+        )
+
+        # Load puzzle state
         piece_positions = save_data["piece_positions"]
-        locked_pieces = set(save_data["locked_pieces"])  # Convert back to set
+        locked_pieces = set(save_data["locked_pieces"])
         ROWS = save_data["rows"]
         COLS = save_data["cols"]
 
-        # Set the flag to use saved data
+        # Set flag to use saved data
         using_saved_data = True
 
-        # Re-generate grid with updated ROWS and COLS
+        # Re-generate the grid
         piece_width = scaled_image_width // COLS
         piece_height = scaled_image_height // ROWS
         grid[:] = [
@@ -192,8 +206,9 @@ def load_progress():
             for col in range(COLS)
         ]
 
-        # Generate pieces but use existing positions
+        # Generate pieces with existing positions
         generate_pieces()
+
         print("Progress loaded successfully!")
         return True
     except FileNotFoundError:
@@ -230,6 +245,26 @@ def create_in_game_buttons(manager):
     )
 
     return exit_button, save_button, reset_button, back_button
+
+# Function to check if the puzzle is complete
+def is_puzzle_complete():
+    for i, (piece_position) in enumerate(piece_positions):
+        # Check if each piece is placed correctly in the grid position
+        grid_x, grid_y = grid[i]
+        if piece_position != [grid_x, grid_y]:
+            return False
+    return True
+
+# Add a font for the congratulatory message
+font = pygame.font.SysFont("Arial", 40)
+
+# Function to display the congratulatory message
+def display_congratulations():
+    message = "Congratulations! You completed the puzzle!"
+    text_surface = font.render(message, True, (255, 255, 255))
+    text_rect = text_surface.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
+    screen.blit(text_surface, text_rect)
+
 
 # Set the game state
 in_game = False
@@ -305,6 +340,7 @@ while running:
 
                 if event.ui_element == continue_button:
                     if load_progress():
+
                         # Fullscreen mode
                         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
                         WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
@@ -325,26 +361,46 @@ while running:
                         print("No saved progress found!")
 
                 if event.ui_element == start_button:
-                    using_saved_data = False  # Starting a new game, use random positions\
-                    piece_positions = []  # Reset piece positions
-                    locked_pieces = set()  # Reset locked pieces
-                    generate_pieces()  # Generate a new set of pieces
-                    # Fullscreen mode
-                    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                    WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
-                    manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
-                    border_rect = pygame.Rect(
-                        (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
-                    )
-                    update_grid_size(dropdown_menu.selected_option)
-                    in_game = True
+                     
+                    IMAGE_PATH = choose_image()
 
-                    title_label.kill()
-                    dropdown_menu.kill()
-                    start_button.kill()
-                    exit_button.kill()
+                    if IMAGE_PATH and os.path.exists(IMAGE_PATH):
+                        original_image = pygame.image.load(IMAGE_PATH)
+                        scaled_image = scale_image_to_fit(
+                            original_image,
+                            WINDOW_WIDTH - 2 * BORDER_PADDING,
+                            WINDOW_HEIGHT - 2 * BORDER_PADDING
+                        )
 
-                    in_game_buttons = create_in_game_buttons(manager)
+                          # Update the scaled image dimensions
+                        scaled_image_width, scaled_image_height = scaled_image.get_size()
+
+                        # Adjust the border rectangle
+                        border_rect = pygame.Rect(
+                            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+                        )
+
+                        using_saved_data = False  # Starting a new game, use random positions\
+                        piece_positions = []  # Reset piece positions
+                        locked_pieces = set()  # Reset locked pieces
+                        generate_pieces()  # Generate a new set of pieces
+                        
+                        # Fullscreen mode
+                        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                        WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
+                        manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
+                        border_rect = pygame.Rect(
+                            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+                        )
+                        update_grid_size(dropdown_menu.selected_option)
+                        
+                        in_game = True
+                        title_label.kill()
+                        dropdown_menu.kill()
+                        start_button.kill()
+                        exit_button.kill()
+
+                        in_game_buttons = create_in_game_buttons(manager)
 
                 if in_game_buttons:
                     exit_button, save_button, reset_button, back_button = in_game_buttons
@@ -366,7 +422,7 @@ while running:
 
                     if event.ui_element == back_button:
                         in_game = False
-                        # Restore main menu
+                        using_saved_data = False  # Reset saved data usage flag
                         title_label = pygame_gui.elements.UILabel(
                             relative_rect=pygame.Rect((250, 50), (300, 50)),
                             text="Jigsaw Puzzle",
@@ -393,17 +449,17 @@ while running:
                             text="Exit",
                             manager=manager,
                         )
-                        # Remove in-game buttons
                         for button in in_game_buttons:
                             button.kill()
                         in_game_buttons = None
+
 
     manager.update(time_delta)
 
     screen.fill(BG_COLOR)
 
     if in_game:
-        pygame.draw.rect(screen, GREEN_BORDER_COLOR, border_rect, 2)
+        pygame.draw.rect(screen, BORDER_COLOR, border_rect, 2)
         piece_width = scaled_image_width // COLS
         piece_height = scaled_image_height // ROWS
         for i, (piece, (x, y)) in enumerate(zip(pieces, piece_positions)):
@@ -411,6 +467,10 @@ while running:
                 screen.blit(piece, (x, y))
         if dragging is not None:
             screen.blit(pieces[dragging], piece_positions[dragging])
+            
+        # Check if the puzzle is complete
+        if is_puzzle_complete():
+            display_congratulations()
 
     manager.draw_ui(screen)
 
