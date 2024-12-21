@@ -28,6 +28,14 @@ pygame.display.set_caption("Jigsaw Puzzle")
 # Clock for FPS
 clock = pygame.time.Clock()
 
+# Timer variables
+timer_running = False
+start_time = None
+elapsed_time = 0
+
+# Timer font
+timer_font = pygame.font.Font(None, 36)  # Default font, size 36
+
 # Default grid size
 ROWS = 3
 COLS = 3
@@ -39,6 +47,68 @@ locked_pieces = set()  # Set of locked pieces
 piece_positions = []  # Positions of the pieces
 pieces = []  # Puzzle pieces
 grid = []  # Grid for snapping
+
+# Function to reset the timer
+def reset_timer():
+    global start_time, elapsed_time, timer_running
+    start_time = pygame.time.get_ticks()
+    elapsed_time = 0
+    timer_running = True
+
+# Function to update the timer
+def update_timer():
+    global elapsed_time
+    if timer_running and start_time is not None:
+        current_time = pygame.time.get_ticks()
+        elapsed_time = (current_time - start_time) // 1000  # Convert to seconds
+
+# Function to render the timer
+def render_timer():
+    minutes = elapsed_time // 60
+    seconds = elapsed_time % 60
+    timer_text = f"Time: {minutes:02}:{seconds:02}"
+    timer_surface = timer_font.render(timer_text, True, (255, 255, 255))
+    screen.blit(timer_surface, (20, 20))
+
+# Function to pause the timer
+def pause_timer():
+    global timer_running
+    timer_running = False
+
+# Function to resume the timer
+def resume_timer():
+    """Resumes the timer from the saved state."""
+    global timer_running, start_time
+    if timer_running:
+        start_time = pygame.time.get_ticks() - elapsed_time * 1000  # Adjust for elapsed time
+
+def save_timer_state():
+    try:
+        timer_data = {
+            "elapsed_time": elapsed_time,  # Save the elapsed time
+            "timer_running": timer_running,  # Save the timer state
+        }
+        with open("timer_state.pkl", "wb") as timer_file:
+            pickle.dump(timer_data, timer_file)
+        print("Timer state saved!")
+    except Exception as e:
+        print(f"Error saving timer state: {e}")
+
+def load_timer_state():
+    global elapsed_time, timer_running
+    try:
+        with open("timer_state.pkl", "rb") as timer_file:
+            timer_data = pickle.load(timer_file)
+            elapsed_time = timer_data.get("elapsed_time", 0)
+            timer_running = timer_data.get("timer_running", False)
+            print("Timer state loaded successfully!")
+    except FileNotFoundError:
+        print("No timer state found!")
+        elapsed_time = 0
+        timer_running = False
+    except Exception as e:
+        print(f"Error loading timer state: {e}")
+
 
 
 def choose_image():
@@ -238,13 +308,7 @@ def create_in_game_buttons(manager):
         text="Reset Puzzle",
         manager=manager,
     )
-    exit_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((1100, 200), (button_width, button_height)),
-        text="Exit",
-        manager=manager,
-    )
-
-    return exit_button, save_button, reset_button, back_button
+    return save_button, reset_button, back_button
 
 # Function to check if the puzzle is complete
 def is_puzzle_complete():
@@ -294,14 +358,18 @@ exit_button = pygame_gui.elements.UIButton(
 
 # Main loop
 running = True
+in_game = False  # Whether the game is in progress
 
 while running:
     time_delta = clock.tick(FPS) / 1000.0
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
         if in_game:
+            update_timer()  # Update the timer when the game is active
+
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mouse_x, mouse_y = event.pos
                 for i in range(len(piece_positions) - 1, -1, -1):  # Iterate backwards
@@ -336,12 +404,13 @@ while running:
 
                 if event.ui_element == exit_button:
                     pygame.quit()
+                    running = False
                     exit()
 
                 if event.ui_element == continue_button:
                     if load_progress():
-
-                        # Fullscreen mode
+                        load_timer_state()
+                        resume_timer()
                         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
                         WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
                         manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -384,6 +453,7 @@ while running:
                         piece_positions = []  # Reset piece positions
                         locked_pieces = set()  # Reset locked pieces
                         generate_pieces()  # Generate a new set of pieces
+                        reset_timer()
                         
                         # Fullscreen mode
                         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
@@ -403,11 +473,7 @@ while running:
                         in_game_buttons = create_in_game_buttons(manager)
 
                 if in_game_buttons:
-                    exit_button, save_button, reset_button, back_button = in_game_buttons
-
-                    if event.ui_element == exit_button:
-                        pygame.quit()
-                        exit()
+                    save_button, reset_button, back_button = in_game_buttons
 
                     if event.ui_element == save_button:
                         save_progress()
@@ -418,10 +484,13 @@ while running:
                         piece_positions = []  # Reset piece positions
                         locked_pieces = set()  # Reset locked pieces
                         generate_pieces()  # Generate a new set of pieces
+                        reset_timer()
                         print("Puzzle reset!")
 
                     if event.ui_element == back_button:
+                        save_timer_state()
                         in_game = False
+                        pause_timer()  # Pause the timer
                         using_saved_data = False  # Reset saved data usage flag
                         title_label = pygame_gui.elements.UILabel(
                             relative_rect=pygame.Rect((250, 50), (300, 50)),
@@ -453,12 +522,12 @@ while running:
                             button.kill()
                         in_game_buttons = None
 
-
     manager.update(time_delta)
 
     screen.fill(BG_COLOR)
 
     if in_game:
+        render_timer()  # Render the timer on the screen
         pygame.draw.rect(screen, BORDER_COLOR, border_rect, 2)
         piece_width = scaled_image_width // COLS
         piece_height = scaled_image_height // ROWS
@@ -471,9 +540,10 @@ while running:
         # Check if the puzzle is complete
         if is_puzzle_complete():
             display_congratulations()
+            save_progress()
+            timer_running = False 
 
     manager.draw_ui(screen)
-
     pygame.display.update()
 
 pygame.quit()
