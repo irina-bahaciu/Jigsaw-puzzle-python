@@ -3,7 +3,10 @@ import pygame_gui
 import pickle
 import os
 import random
-from tkinter import Tk
+import sqlite3
+import tkinter as tk
+from database import insert_user, validate_user, insert_record
+from tkinter import Tk, messagebox
 from tkinter.filedialog import askopenfilename
 
 # Initialize Pygame and pygame_gui
@@ -15,6 +18,11 @@ BG_COLOR = (39, 64, 1)
 BORDER_COLOR = (242, 159, 5)
 FPS = 60
 
+# Game States
+LOGIN_SCREEN = "login_screen"
+HOME_SCREEN = "home_screen"
+GAME_SCREEN = "game_screen"
+
 # Paths
 SAVE_PATH = "puzzle_save.txt"  # Save file for puzzle progress
 
@@ -25,13 +33,17 @@ manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Jigsaw Puzzle")
 
-# Clock for FPS
-clock = pygame.time.Clock()
-
-# Timer variables
+# Variables
+username = None
 timer_running = False
 start_time = None
 elapsed_time = 0
+clock = pygame.time.Clock()
+running = True
+logged_in = False
+game_state = LOGIN_SCREEN
+puzzle_completed = False
+state_logged = False
 
 # Timer font
 timer_font = pygame.font.Font(None, 36)  # Default font, size 36
@@ -109,8 +121,6 @@ def load_timer_state():
     except Exception as e:
         print(f"Error loading timer state: {e}")
 
-
-
 def choose_image():
     Tk().withdraw()  # Hide the root window
     file_path = askopenfilename(
@@ -139,19 +149,11 @@ def scale_image_to_fit(image, max_width, max_height):
     
     return scaled_image
 
-
-# Dropdown menu for grid selection
-dropdown_menu = pygame_gui.elements.UIDropDownMenu(
-    options_list=["3x3", "4x4", "5x5", "6x6", "7x7", "8x8", "9x9", "10x10"],
-    starting_option="3x3",  # Default is 3x3
-    relative_rect=pygame.Rect((250, 150), (300, 50)),
-    manager=manager,
-)
-
 # Update grid size based on dropdown selection
 def update_grid_size(selected_option):
     global ROWS, COLS
     sizes = {
+        ('2x2', '2x2'): (2, 2),
         ('3x3', '3x3'): (3, 3),
         ('4x4', '4x4'): (4, 4),
         ('5x5', '5x5'): (5, 5),
@@ -179,7 +181,6 @@ def split_image(scaled_image, rows, cols):
             )
             pieces.append(piece_surface)
     return pieces
-
 
 # Generate puzzle pieces and their random positions
 def generate_pieces():
@@ -210,7 +211,6 @@ def generate_pieces():
         for col in range(COLS)
     ]
 
-
 # Save puzzle progress
 def save_progress():
     try:
@@ -228,7 +228,6 @@ def save_progress():
         print("Progress saved!")
     except Exception as e:
         print(f"Error saving progress: {e}")
-
 
 # Load puzzle progress
 def load_progress():
@@ -287,26 +286,23 @@ def load_progress():
         print(f"Error loading progress: {e}")
     return False
 
-
 # Create in-game buttons
 def create_in_game_buttons(manager):
-    button_width = 150
-    button_height = 35
-
+    global save_button, reset_button, back_button
     save_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((1100, 50), (button_width, button_height)),
-        text="Save Progress",
-        manager=manager,
-    )
-    back_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((1100, 100), (button_width, button_height)),
-        text="Back to Start",
-        manager=manager,
+        relative_rect=pygame.Rect((1100, 50), (150, 35)), 
+        text='Save progress', 
+        manager=manager
     )
     reset_button = pygame_gui.elements.UIButton(
-        relative_rect=pygame.Rect((1100, 150), (button_width, button_height)),
-        text="Reset Puzzle",
-        manager=manager,
+        relative_rect=pygame.Rect((1100, 100), (150, 35)),
+        text='Reset game', 
+        manager=manager
+    )
+    back_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((1100, 150), (150, 35)), 
+        text='Back to menu', 
+        manager=manager
     )
     return save_button, reset_button, back_button
 
@@ -324,41 +320,82 @@ font = pygame.font.SysFont("Arial", 40)
 
 # Function to display the congratulatory message
 def display_congratulations():
-    message = "Congratulations! You completed the puzzle!"
-    text_surface = font.render(message, True, (255, 255, 255))
+    # Create a surface for the congratulations message
+    congrats_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+    congrats_surface.set_alpha(200)  # Set transparency
+    congrats_surface.fill((0, 0, 0))  # Fill with black color
+
+    # Render the congratulations text
+    font = pygame.font.Font(None, 74)
+    text_surface = font.render("Congratulations!", True, (255, 255, 255))
     text_rect = text_surface.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
-    screen.blit(text_surface, text_rect)
+    congrats_surface.blit(text_surface, text_rect)
 
+    # Blit the congratulations surface onto the main screen
+    screen.blit(congrats_surface, (0, 0))
+    pygame.display.update()
 
-# Set the game state
-in_game = False
-in_game_buttons = None
+    # Wait for a few seconds to display the message
+    pygame.time.wait(3000)
+
+# Function to show error message
+def show_error_message(message):
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+    messagebox.showerror("Error", message)
+    root.destroy()
+
+# Create UI elements for registration and login
+def create_login_ui():
+    global title_label, username_label, password_label, username_input, password_input, signup_button, login_button, no_authentication_button
+    title_label = pygame_gui.elements.UILabel(relative_rect=pygame.Rect((250, 50), (300, 50)), text="Jigsaw Puzzle", manager=manager,)
+    username_label = pygame_gui.elements.UILabel(relative_rect=pygame.Rect((50, 200), (300, 50)), text="Username", manager=manager,)
+    password_label = pygame_gui.elements.UILabel(relative_rect=pygame.Rect((50, 270), (300, 50)), text="Password", manager=manager,)
+    username_input = pygame_gui.elements.UITextEntryLine(relative_rect=pygame.Rect((250, 200), (300, 50)), manager=manager)
+    password_input = pygame_gui.elements.UITextEntryLine(relative_rect=pygame.Rect((250, 270), (300, 50)), manager=manager)
+    password_input.set_text_hidden(True)
+    signup_button = pygame_gui.elements.UIButton(relative_rect=pygame.Rect((250, 340), (100, 50)), text='Sign Up', manager=manager)
+    login_button = pygame_gui.elements.UIButton(relative_rect=pygame.Rect((450, 340), (100, 50)), text='Log In', manager=manager)
+    no_authentication_button = pygame_gui.elements.UIButton(relative_rect=pygame.Rect((300, 400), (200, 50)), text='No Authentication', manager=manager)
+    #return username_input, password_input, signup_button, login_button, no_authentication_button
 
 # Main menu elements
-title_label = pygame_gui.elements.UILabel(
-    relative_rect=pygame.Rect((250, 50), (300, 50)),
-    text="Jigsaw Puzzle",
-    manager=manager,
-)
-start_button = pygame_gui.elements.UIButton(
-    relative_rect=pygame.Rect((250, 250), (300, 50)),
-    text="Start New Game",
-    manager=manager,
-)
-continue_button = pygame_gui.elements.UIButton(
-    relative_rect=pygame.Rect((250, 350), (300, 50)),
-    text="Continue Game",
-    manager=manager,
-)
-exit_button = pygame_gui.elements.UIButton(
-    relative_rect=pygame.Rect((250, 450), (300, 50)),
-    text="Exit",
-    manager=manager,
-)
+def create_home_screen_ui():
+    global title_label, dropdown_menu, start_button, continue_button, exit_button
+    title_label = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect((250, 50), (300, 50)),
+        text="Jigsaw Puzzle",
+        manager=manager,
+    )
+    dropdown_menu = pygame_gui.elements.UIDropDownMenu(
+        options_list=["2x2", "3x3", "4x4", "5x5", "6x6", "7x7", "8x8", "9x9", "10x10"],
+        starting_option="2x2",  # Default is 2x2
+        relative_rect=pygame.Rect((250, 150), (300, 50)),
+        manager=manager,
+    )
+    start_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((250, 250), (300, 50)),
+        text="Start New Game",
+        manager=manager,
+    )
+    continue_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((250, 350), (300, 50)),
+        text="Continue Game",
+        manager=manager,
+    )
+    exit_button = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect((250, 450), (300, 50)),
+        text="Exit",
+        manager=manager,
+    )
+    #return title_label, dropdown_menu, start_button, continue_button, exit_button
+
+create_login_ui()
 
 # Main loop
 running = True
 in_game = False  # Whether the game is in progress
+in_game_buttons = None  # Buttons for the in-game screen
 
 while running:
     time_delta = clock.tick(FPS) / 1000.0
@@ -402,131 +439,155 @@ while running:
         if event.type == pygame.USEREVENT:
             if event.user_type == pygame_gui.UI_BUTTON_PRESSED:
 
-                if event.ui_element == exit_button:
-                    pygame.quit()
-                    running = False
-                    exit()
+                if game_state == LOGIN_SCREEN:
+                    if event.ui_element == signup_button:
+                        username = username_input.get_text()
+                        password = password_input.get_text()
+                        if not insert_user(username, password):
+                            show_error_message(f"Error: Username {username} is already in use.")
+                        else:
+                            print(f"User {username} registered.")
+                    elif event.ui_element == login_button:
+                        username = username_input.get_text()
+                        password = password_input.get_text()
+                        if validate_user(username, password):
+                            print(f"User {username} logged in.")
+                            logged_in = True
+                            game_state = HOME_SCREEN
+                            # Remove the input UI elements after login
+                            username_label.kill()
+                            password_label.kill()
+                            username_input.kill()
+                            password_input.kill()
+                            signup_button.kill()
+                            login_button.kill()
+                            no_authentication_button.kill()
+                            create_home_screen_ui()
+                        else:
+                            show_error_message(f"Error: Invalid user or password.")
+                    elif event.ui_element == no_authentication_button:
+                        print("No authentication selected.")
+                        logged_in = False
+                        game_state = HOME_SCREEN
+                        username_label.kill()
+                        password_label.kill()
+                        username_input.kill()
+                        password_input.kill()
+                        signup_button.kill()
+                        login_button.kill()
+                        no_authentication_button.kill()
+                        create_home_screen_ui()
+                
+                elif game_state == HOME_SCREEN:
+                    if event.ui_element == exit_button:
+                        pygame.quit()
+                        running = False
+                        exit()
 
-                if event.ui_element == continue_button:
-                    if load_progress():
-                        load_timer_state()
-                        resume_timer()
-                        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                        WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
-                        manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
-                        border_rect = pygame.Rect(
-                            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
-                        )
-                        update_grid_size(dropdown_menu.selected_option)
+                    if event.ui_element == continue_button:
+                        if load_progress():
+                            game_state = GAME_SCREEN
+                            load_timer_state()
+                            resume_timer()
+                            screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                            WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
+                            manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
+                            border_rect = pygame.Rect(
+                                (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+                            )
+                            update_grid_size(dropdown_menu.selected_option)
 
-                        in_game = True
-                        title_label.kill()
-                        dropdown_menu.kill()
-                        continue_button.kill()
-                        exit_button.kill()
+                            in_game = True
+                            title_label.kill()
+                            continue_button.kill()
+                            exit_button.kill()
+                            dropdown_menu.kill()
 
-                        in_game_buttons = create_in_game_buttons(manager)
-                    else:
-                        print("No saved progress found!")
+                            in_game_buttons = create_in_game_buttons(manager)
+                        else:
+                            print("No saved progress found!")
 
-                if event.ui_element == start_button:
-                     
-                    IMAGE_PATH = choose_image()
+                    if event.ui_element == start_button:
+                        IMAGE_PATH = choose_image()
 
-                    if IMAGE_PATH and os.path.exists(IMAGE_PATH):
-                        original_image = pygame.image.load(IMAGE_PATH)
-                        scaled_image = scale_image_to_fit(
-                            original_image,
-                            WINDOW_WIDTH - 2 * BORDER_PADDING,
-                            WINDOW_HEIGHT - 2 * BORDER_PADDING
-                        )
+                        if IMAGE_PATH and os.path.exists(IMAGE_PATH):
+                            original_image = pygame.image.load(IMAGE_PATH)
+                            scaled_image = scale_image_to_fit(
+                                original_image,
+                                WINDOW_WIDTH - 2 * BORDER_PADDING,
+                                WINDOW_HEIGHT - 2 * BORDER_PADDING
+                            )
+                            game_state = GAME_SCREEN
+                            # Update the scaled image dimensions
+                            scaled_image_width, scaled_image_height = scaled_image.get_size()
 
-                          # Update the scaled image dimensions
-                        scaled_image_width, scaled_image_height = scaled_image.get_size()
+                            # Adjust the border rectangle
+                            border_rect = pygame.Rect(
+                                (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+                            )
 
-                        # Adjust the border rectangle
-                        border_rect = pygame.Rect(
-                            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
-                        )
+                            using_saved_data = False  # Starting a new game, use random positions
+                            piece_positions = []  # Reset piece positions
+                            locked_pieces = set()  # Reset locked pieces
+                            generate_pieces()  # Generate a new set of pieces
+                            reset_timer()
+                            
+                            # Fullscreen mode
+                            screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+                            WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
+                            manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
+                            border_rect = pygame.Rect(
+                                (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
+                            )
+                            update_grid_size(dropdown_menu.selected_option)
+                            
+                            in_game = True
+                            title_label.kill()
+                            start_button.kill()
+                            exit_button.kill()
+                            dropdown_menu.kill()
 
-                        using_saved_data = False  # Starting a new game, use random positions\
-                        piece_positions = []  # Reset piece positions
-                        locked_pieces = set()  # Reset locked pieces
-                        generate_pieces()  # Generate a new set of pieces
-                        reset_timer()
+                            in_game_buttons = create_in_game_buttons(manager)
+
+                elif game_state == GAME_SCREEN:
+                    if in_game_buttons: 
+                        save_button, reset_button, back_button = in_game_buttons
                         
-                        # Fullscreen mode
-                        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-                        WINDOW_WIDTH, WINDOW_HEIGHT = screen.get_size()
-                        manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
-                        border_rect = pygame.Rect(
-                            (BORDER_PADDING, BORDER_PADDING, scaled_image_width, scaled_image_height)
-                        )
-                        update_grid_size(dropdown_menu.selected_option)
-                        
-                        in_game = True
-                        title_label.kill()
-                        dropdown_menu.kill()
-                        start_button.kill()
-                        exit_button.kill()
+                        if event.ui_element == save_button:
+                            save_progress()
+                            print("Progress saved!")
 
-                        in_game_buttons = create_in_game_buttons(manager)
+                        if event.ui_element == reset_button:
+                            using_saved_data = False  # Starting a new game, use random positions
+                            piece_positions = []  # Reset piece positions
+                            locked_pieces = set()
+                            generate_pieces()  # Generate a new set of pieces
+                            reset_timer()
+                            print("Puzzle reset!")
 
-                if in_game_buttons:
-                    save_button, reset_button, back_button = in_game_buttons
-
-                    if event.ui_element == save_button:
-                        save_progress()
-                        print("Progress saved!")
-
-                    if event.ui_element == reset_button:
-                        using_saved_data = False  # Starting a new game, use random positions\
-                        piece_positions = []  # Reset piece positions
-                        locked_pieces = set()  # Reset locked pieces
-                        generate_pieces()  # Generate a new set of pieces
-                        reset_timer()
-                        print("Puzzle reset!")
-
-                    if event.ui_element == back_button:
-                        save_timer_state()
-                        in_game = False
-                        pause_timer()  # Pause the timer
-                        using_saved_data = False  # Reset saved data usage flag
-                        title_label = pygame_gui.elements.UILabel(
-                            relative_rect=pygame.Rect((250, 50), (300, 50)),
-                            text="Jigsaw Puzzle",
-                            manager=manager,
-                        )
-                        dropdown_menu = pygame_gui.elements.UIDropDownMenu(
-                            options_list=["3x3", "4x4", "5x5", "6x6", "7x7", "8x8", "9x9", "10x10"],
-                            starting_option="3x3",
-                            relative_rect=pygame.Rect((250, 150), (300, 50)),
-                            manager=manager,
-                        )
-                        start_button = pygame_gui.elements.UIButton(
-                            relative_rect=pygame.Rect((250, 250), (300, 50)),
-                            text="Start New Game",
-                            manager=manager,
-                        )
-                        continue_button = pygame_gui.elements.UIButton(
-                            relative_rect=pygame.Rect((250, 350), (300, 50)),
-                            text="Continue Game",
-                            manager=manager,
-                        )
-                        exit_button = pygame_gui.elements.UIButton(
-                            relative_rect=pygame.Rect((250, 450), (300, 50)),
-                            text="Exit",
-                            manager=manager,
-                        )
-                        for button in in_game_buttons:
-                            button.kill()
-                        in_game_buttons = None
+                        if event.ui_element == back_button:
+                            save_timer_state()
+                            game_state = HOME_SCREEN
+                            pause_timer()  # Pause the timer
+                            using_saved_data = False  # Reset saved data usage flag
+                            save_button.kill() 
+                            reset_button.kill()
+                            back_button.kill()
+                            create_home_screen_ui()
+                            for button in in_game_buttons:
+                                button.kill()
+                            in_game_buttons = None
 
     manager.update(time_delta)
 
     screen.fill(BG_COLOR)
 
-    if in_game:
+    if game_state == LOGIN_SCREEN:
+        manager.draw_ui(screen)
+    elif game_state == HOME_SCREEN:
+        manager.draw_ui(screen)
+    elif game_state == GAME_SCREEN:
+        # Transition to the home screen or main game logic
         render_timer()  # Render the timer on the screen
         pygame.draw.rect(screen, BORDER_COLOR, border_rect, 2)
         piece_width = scaled_image_width // COLS
@@ -538,10 +599,26 @@ while running:
             screen.blit(pieces[dragging], piece_positions[dragging])
             
         # Check if the puzzle is complete
-        if is_puzzle_complete():
+        if is_puzzle_complete() and not puzzle_completed:
+            print("Puzzle is complete. Saving progress and inserting record.")
             display_congratulations()
             save_progress()
-            timer_running = False 
+            timer_running = False
+            puzzle_completed = True
+            state_logged = True
+
+            # Automatically save the record if logged in
+            if logged_in:
+                puzzle_image = IMAGE_PATH  # Use the IMAGE_PATH variable
+                completion_time = elapsed_time  # Replace with actual completion time
+                print(f"Inserting record: username={username}, puzzle_image={puzzle_image}, completion_time={completion_time}")
+                insert_record(username, puzzle_image, completion_time)
+                print("Record saved.")
+        else:
+            if not puzzle_completed and not state_logged:
+                print("Puzzle not complete or already completed.")
+                state_logged = True  # Set the flag to indicate state has been logged
+
 
     manager.draw_ui(screen)
     pygame.display.update()
